@@ -1,0 +1,23 @@
+# ESP-IDF / Build outputs
+build/
+sdkconfig.old
+sdkconfig.ci
+*.elf
+*.bin
+*.map
+
+# Python / Pytest cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# VS Code / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+.clangd
