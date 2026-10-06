@@ -9,6 +9,8 @@
 #include "esp_log.h"
 #include "driver/rmt_tx.h"
 #include "led_strip_encoder.h"
+#include "i2cdev.h"
+#include "bmp280.h"
 
 // MACROS PARA EL LED RGB
 #define LED_RGB_PIN 48
@@ -20,7 +22,11 @@
 
 // MACRO PARA TIEMPO DE PARPADEO
 #define BLINK_PERIOD_ON_MS 1000
-#define BLINK_PERIOD_OFF_MS 10000
+#define BLINK_PERIOD_OFF_MS 1000
+
+// PINES PARA EL BMP280
+#define I2C_MASTER_SDA 4
+#define I2C_MASTER_SCL 5
 
 // VARIABLE PARA EL LOGI
 static const char *TAG = "example";
@@ -28,6 +34,7 @@ static uint8_t led_pixels[LED_NUMBERS*3]; // cada color necesita 3 bytes
 
 void app_main(void)
 {   
+    // --------------------- RGB ----------------------//
     // 1. CONFIGURAMOS Y CREAMOS EL CANAL                                     
     ESP_LOGI(TAG,"Creando el canal TX RGB");
     rmt_tx_channel_config_t rmt_config = 
@@ -66,6 +73,29 @@ void app_main(void)
         .loop_count=0,
     };
 
+    // --------------------- BMP280 ----------------------//
+
+    ESP_LOGI(TAG,"Iniciando configuración del BMP280");
+
+    // Inicializamos el bmp280
+    ESP_ERROR_CHECK(i2cdev_init());
+
+    // Estructura de configuración del sensor:
+    bmp280_t dev;
+    bmp280_params_t params;
+
+    bmp280_init_default_params(&params);
+    memset(&dev,0,sizeof(bmp280_t));
+
+    // Inicializamos el descriptor conectando los pines SDA y SCL.
+    ESP_ERROR_CHECK(bmp280_init_desc(&dev, BMP280_I2C_ADDRESS_0,0,I2C_MASTER_SDA,I2C_MASTER_SCL));
+    ESP_ERROR_CHECK(bmp280_init(&dev,&params));
+
+    ESP_LOGI(TAG,"Sensor inicializado correctamente! chip conectado con ID: 0x%02X",dev.id);
+
+    float pressure = 0.0f;
+    float temperature = 0.0f;
+
     while(1)
     {
         // PREPARAMOS EL COLOR A TRANSMITIR
@@ -84,9 +114,21 @@ void app_main(void)
         led_pixels[0]=0;
         led_pixels[1]=0;
         led_pixels[2]=0;
-
+        
         rmt_transmit(rmt_channel_handle,rmt_encoder_handle,&led_pixels,sizeof(led_pixels),&ts_config);
         rmt_tx_wait_all_done(rmt_channel_handle,portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_OFF_MS));
+
+        //----------------- LECTURA BMP280----------------------//
+
+        if(bmp280_read_float(&dev,&temperature,&pressure,NULL) == ESP_OK)
+        {
+            ESP_LOGI(TAG,"Temperatura: %.2f °C | Presión: %.2f Pa",temperature,pressure);
+        }
+        else
+        {
+            ESP_LOGE(TAG,"Error al leer del BMP280 en el bus I2C");
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

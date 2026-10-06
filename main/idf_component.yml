@@ -1,0 +1,3 @@
+dependencies:
+  # Librería para el sensor BMP280 vía I2C.
+  esp-idf-lib/bmp280: "^1.0.7" 

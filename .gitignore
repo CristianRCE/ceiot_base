@@ -21,3 +21,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .clangd
+
+# Libreries
+managed_components/
