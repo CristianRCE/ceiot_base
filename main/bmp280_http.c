@@ -41,141 +41,81 @@
 static const char *TAG = "example";
 static uint8_t led_pixels[LED_NUMBERS*3]; // cada color necesita 3 bytes
 
-// PROTOTIPOS DE LAS FUNCIONES
+// PROTOTIPOS DE FUNCIONES
 void wifi_init_sta(void);
+
 static void event_handler(void *arg,
                         esp_event_base_t event_base,
                         int32_t event_id,
                         void* event_data
                             );
 
+void rgb_init(void);
+
+void bmp280_init_esp(void);
+
+void rgb_blink_red(void);
+
+void rgb_blink_off(void);
+
 // VARIABLES GLOBALES
 static int s_retry_num=0; // contador de antidad de intentos.
 
+static rmt_channel_handle_t rmt_channel_handle = NULL;
+static rmt_encoder_handle_t rmt_encoder_handle = NULL;
+static bmp280_t dev;
+static float pressure = 0.0f;
+static float temperature = 0.0f;
 
+// Configuración de transmisicón estándar??
+rmt_transmit_config_t ts_config =
+{
+    .loop_count=0,
+};
 
 void app_main(void)
 {   
-    /** 
-    // --------------------- RGB ----------------------//
-    // 1. CONFIGURAMOS Y CREAMOS EL CANAL                                     
-    ESP_LOGI(TAG,"Creando el canal TX RGB");
-    rmt_tx_channel_config_t rmt_config = 
-    {
-        .gpio_num=LED_RGB_PIN,
-        .clk_src=SRC_CLK,
-        .resolution_hz=RESOLUTION_HZ,  
-        .mem_block_symbols=BLOCK_MEM,
-        .trans_queue_depth=TRANS_QUEUE,
-    };
-
-    rmt_channel_handle_t rmt_channel_handle = NULL;
-    
-    ESP_ERROR_CHECK(rmt_new_tx_channel(&rmt_config,&rmt_channel_handle));
-
-    // 2. CONFIGURO Y CREO EL ENCODER DE LA TIRA DE LED
-    ESP_LOGI(TAG,"Inicializando encoder");
-
-    led_strip_encoder_config_t encoder_config = 
-    {
-        .resolution=RESOLUTION_HZ,
-    };
-
-    rmt_encoder_handle_t rmt_encoder_handle=NULL;
-
-    ESP_ERROR_CHECK(rmt_new_led_strip_encoder(&encoder_config,&rmt_encoder_handle));
-    
-    // 3. HABILITAMOS EL CANAL
-    ESP_LOGI(TAG,"HABILITAMOS EL CANAL");
-
-    ESP_ERROR_CHECK(rmt_enable(rmt_channel_handle));
-
-    // Configuración de transmisicón estándar??
-    rmt_transmit_config_t ts_config =
-    {
-        .loop_count=0,
-    };
-
-    // --------------------- BMP280 ----------------------//
-
-    ESP_LOGI(TAG,"Iniciando configuración del BMP280");
-
-    // Inicializamos el bmp280
-    ESP_ERROR_CHECK(i2cdev_init());
-
-    // Estructura de configuración del sensor:
-    bmp280_t dev;
-    bmp280_params_t params;
-
-    bmp280_init_default_params(&params);
-    memset(&dev,0,sizeof(bmp280_t));
-
-    // Inicializamos el descriptor conectando los pines SDA y SCL.
-    ESP_ERROR_CHECK(bmp280_init_desc(&dev, BMP280_I2C_ADDRESS_0,0,I2C_MASTER_SDA,I2C_MASTER_SCL));
-    ESP_ERROR_CHECK(bmp280_init(&dev,&params));
-
-    ESP_LOGI(TAG,"Sensor inicializado correctamente! chip conectado con ID: 0x%02X",dev.id);
-
-    float pressure = 0.0f;
-    float temperature = 0.0f;
-    */
     // Inicializaciones:
 
-    // Inicialización de NVS Flash
+    // Inicialización de NVS Flash --> inicializar esto antes que cualquier cosa.
     esp_err_t ret_nvs_flash =  nvs_flash_init();
     if(ret_nvs_flash!=ESP_OK)
     {
         return;
     }
+    // Inicialización del RGB.
+    rgb_init();
+
     // Inicialización de Wi-Fi
     wifi_init_sta();
 
+    //Inicialización del BMP280
+    void bmp280_init_esp(void);
+
     while(1)
-    {
-        /**
-        // PREPARAMOS EL COLOR A TRANSMITIR
-        // Formato GRB: posición 0 es verde.
-        led_pixels[0]=255;
-        led_pixels[1]=0;
-        led_pixels[2]=0;
-
-        // Transmito el color verde por 1 segundo. 
-        rmt_transmit(rmt_channel_handle,rmt_encoder_handle,&led_pixels,sizeof(led_pixels),&ts_config);
-        rmt_tx_wait_all_done(rmt_channel_handle,portMAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_ON_MS));
-
-        // Transmito el color nulo por 10 segundos
-        // Formato GRB: posición 0 es verde.
-        led_pixels[0]=0;
-        led_pixels[1]=0;
-        led_pixels[2]=0;
-        
-        rmt_transmit(rmt_channel_handle,rmt_encoder_handle,&led_pixels,sizeof(led_pixels),&ts_config);
-        rmt_tx_wait_all_done(rmt_channel_handle,portMAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_OFF_MS));
-
-        //----------------- LECTURA BMP280----------------------//
-
-        if(bmp280_read_float(&dev,&temperature,&pressure,NULL) == ESP_OK)
-        {
-            ESP_LOGI(TAG,"Temperatura: %.2f °C | Presión: %.2f Pa",temperature,pressure);
-        }
-        else
-        {
-            ESP_LOGE(TAG,"Error al leer del BMP280 en el bus I2C");
-        }
-        */
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        
-        
+    {   
+        rgb_blink_red();
+        rgb_blink_off();
     }
-};
+}
 
 /** 
- * Esta función no se llama en el código principal. La llama el bucle de eventos del
- * esp32/FreeRTOS cuando ocurre algo a  nivel hardware o en la pila de red.
+ * @brief Implementa la lógica de conexión y eventos a la red Wi-Fi. 
+ * 
+ * Maneja la lógica de eventos ante una conexión a red, desconexión, 
+ * define cantidad de reintentos,etc.
+ * 
+ * @param[in]: .....
+ * 
+ * @return: None
+ * 
+ * @note Se vincula con la función "wifi_init_sta" de forma automática. NO hace falta llamarla 
+ * en la aplicación del código.
+ * 
+ * @warning None.
+ * 
+ * @see: wifi_init_sta function.
 */
-
 static void event_handler(void *arg,
                         esp_event_base_t event_base,
                         int32_t event_id,
@@ -210,6 +150,19 @@ static void event_handler(void *arg,
     };
 }
 
+/** 
+ * @brief Inicializa el Wi-FI
+ * 
+ * @param[in]
+ * 
+ * @return None
+ * 
+ * @note Se 
+ * 
+ * @warning,None.
+ * 
+ * @see
+*/
 void wifi_init_sta(void)
 {
     // Inicializamos el stack TCP/IP
@@ -266,4 +219,107 @@ void wifi_init_sta(void)
 
 
     ESP_LOGI(TAG,"wifi_init_sta function finished");
+}
+
+void rgb_init(void)
+{
+    // --------------------- RGB ----------------------//
+    // 1. CONFIGURAMOS Y CREAMOS EL CANAL                                     
+    ESP_LOGI(TAG,"Creando el canal TX RGB");
+    rmt_tx_channel_config_t rmt_config = 
+    {
+        .gpio_num=LED_RGB_PIN,
+        .clk_src=SRC_CLK,
+        .resolution_hz=RESOLUTION_HZ,  
+        .mem_block_symbols=BLOCK_MEM,
+        .trans_queue_depth=TRANS_QUEUE,
+    };
+    
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&rmt_config,&rmt_channel_handle));
+
+    // 2. CONFIGURO Y CREO EL ENCODER DE LA TIRA DE LED
+    ESP_LOGI(TAG,"Inicializando encoder");
+
+    led_strip_encoder_config_t encoder_config = 
+    {
+        .resolution=RESOLUTION_HZ,
+    };
+
+    ESP_ERROR_CHECK(rmt_new_led_strip_encoder(&encoder_config,&rmt_encoder_handle));
+    
+    // 3. HABILITAMOS EL CANAL
+    ESP_LOGI(TAG,"HABILITAMOS EL CANAL");
+
+    ESP_ERROR_CHECK(rmt_enable(rmt_channel_handle));
+
+}
+
+void rgb_blink_red(void)
+{
+    // PREPARAMOS EL COLOR A TRANSMITIR
+    // Formato GRB: posición 0 es verde.
+    led_pixels[0]=255;
+    led_pixels[1]=0;
+    led_pixels[2]=0;
+
+    // Transmito el color verde por 1 segundo. 
+    rmt_transmit(rmt_channel_handle,rmt_encoder_handle,&led_pixels,sizeof(led_pixels),&ts_config);
+    rmt_tx_wait_all_done(rmt_channel_handle,portMAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_ON_MS));
+}
+
+
+void rgb_blink_off(void)
+{
+    // PREPARAMOS EL COLOR A TRANSMITIR
+    // Formato GRB: posición 0 es verde.
+    led_pixels[0]=0;
+    led_pixels[1]=0;
+    led_pixels[2]=0;
+
+    // Transmito el color verde por 1 segundo. 
+    rmt_transmit(rmt_channel_handle,rmt_encoder_handle,&led_pixels,sizeof(led_pixels),&ts_config);
+    rmt_tx_wait_all_done(rmt_channel_handle,portMAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_OFF_MS));
+}
+
+
+void bmp280_init_esp(void)
+{
+    // --------------------- BMP280 ----------------------//
+    
+    ESP_LOGI(TAG,"Iniciando configuración del BMP280");
+
+    // Inicializamos el bmp280
+    ESP_ERROR_CHECK(i2cdev_init());
+
+    // Estructura de configuración del sensor:
+    //bmp280_t dev;
+    bmp280_params_t params;
+
+    bmp280_init_default_params(&params);
+    memset(&dev,0,sizeof(bmp280_t));
+
+    // Inicializamos el descriptor conectando los pines SDA y SCL.
+    ESP_ERROR_CHECK(bmp280_init_desc(&dev, BMP280_I2C_ADDRESS_0,0,I2C_MASTER_SDA,I2C_MASTER_SCL));
+    ESP_ERROR_CHECK(bmp280_init(&dev,&params));
+
+    ESP_LOGI(TAG,"Sensor inicializado correctamente! chip conectado con ID: 0x%02X",dev.id);
+
+    //float pressure = 0.0f;
+    //float temperature = 0.0f;
+}
+
+void read_temp_press(void)
+{
+    //----------------- LECTURA BMP280----------------------//
+
+    if(bmp280_read_float(&dev,&temperature,&pressure,NULL) == ESP_OK)
+    {   
+        ESP_LOGI(TAG,"Temperatura: %.2f °C | Presión: %.2f Pa",temperature,pressure);
+    }
+    else
+    {
+        ESP_LOGE(TAG,"Error al leer del BMP280 en el bus I2C");
+    }
 }
