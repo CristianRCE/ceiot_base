@@ -15,6 +15,7 @@
 #include "esp_event.h" // para el bucle de eventos
 #include "nvs_flash.h"
 #include "esp_netif.h"
+#include "esp_http_client.h"
 
 // MACROS PARA EL LED RGB
 #define LED_RGB_PIN 48
@@ -24,22 +25,24 @@
 #define TRANS_QUEUE 4
 #define SRC_CLK RMT_CLK_SRC_DEFAULT
 
-// MACRO PARA TIEMPO DE PARPADEO
+// MACROS PARA TIEMPO DE PARPADEO
 #define BLINK_PERIOD_ON_MS 1000
-#define BLINK_PERIOD_OFF_MS 1000
+#define BLINK_PERIOD_OFF_MS 4000
 
-// PINES PARA EL BMP280
+// MACROS PARA PINES DEL BMP280
 #define I2C_MASTER_SDA 4
 #define I2C_MASTER_SCL 5
 
-//MACROS PARA EL WI-FI
+// MACROS PARA EL WI-FI
 #define WIFI_SSID "WifiNet_Digital_Aguilera-2.4G"
 #define WIFI_PASSWORD "AguileraY287"
 #define WIFI_RETRY 5
 
-// VARIABLE PARA EL LOGI
-static const char *TAG = "example";
-static uint8_t led_pixels[LED_NUMBERS*3]; // cada color necesita 3 bytes
+// MACROS PARA HTTP
+#define SERVER_URL "http://192.168.1.20:8080/measurement"
+
+// MACRO PARA EL DEVICE ID
+#define DEVICE_ID "01"
 
 // PROTOTIPOS DE FUNCIONES
 void wifi_init_sta(void);
@@ -50,52 +53,71 @@ static void event_handler(void *arg,
                         void* event_data
                             );
 
-void rgb_init(void);
+esp_err_t bmp280_init_esp(bmp280_t *dev,gpio_num_t sda_pin,gpio_num_t scl_pin);
 
-void bmp280_init_esp(void);
+void bmp280_read(bmp280_t *dev,float *temperature,float *pressure);
+
+void rgb_init(void);
 
 void rgb_blink_red(void);
 
 void rgb_blink_off(void);
+
+static esp_err_t http_event_handler(esp_http_client_event_t *evt);
+
+static void http_post(float *pressure,float *temperature);
+
+static void http_get(void);
 
 // VARIABLES GLOBALES
 static int s_retry_num=0; // contador de antidad de intentos.
 
 static rmt_channel_handle_t rmt_channel_handle = NULL;
 static rmt_encoder_handle_t rmt_encoder_handle = NULL;
-static bmp280_t dev;
-static float pressure = 0.0f;
-static float temperature = 0.0f;
 
+static const char *TAG = "example";
+
+static uint8_t led_pixels[LED_NUMBERS*3]; // cada color necesita 3 bytes
 // Configuración de transmisicón estándar??
 rmt_transmit_config_t ts_config =
 {
     .loop_count=0,
 };
 
+static char *POST_DATA_TEMPLATE = "id="DEVICE_ID"&t=%0.2f&h=%0.2f";  // FOrmato URL encoded
+
 void app_main(void)
 {   
-    // Inicializaciones:
+    // ----- Variables Locales ----- //
+    bmp280_t dev;
+    float pressure = 0.0f;
+    float temperature = 0.0f;
+
+    // ----- Inicializaciones ----- //
 
     // Inicialización de NVS Flash --> inicializar esto antes que cualquier cosa.
+
     esp_err_t ret_nvs_flash =  nvs_flash_init();
     if(ret_nvs_flash!=ESP_OK)
     {
         return;
     }
-    // Inicialización del RGB.
-    rgb_init();
 
     // Inicialización de Wi-Fi
     wifi_init_sta();
-
+   
+    // Inicialización del RGB.
+    rgb_init();
+    
     //Inicialización del BMP280
-    void bmp280_init_esp(void);
+    bmp280_init_esp(&dev,I2C_MASTER_SDA,I2C_MASTER_SCL);
 
     while(1)
     {   
+        bmp280_read(&dev,&temperature,&pressure);
         rgb_blink_red();
         rgb_blink_off();
+
     }
 }
 
@@ -221,6 +243,124 @@ void wifi_init_sta(void)
     ESP_LOGI(TAG,"wifi_init_sta function finished");
 }
 
+static esp_err_t http_event_handler(esp_http_client_event_t *evt)
+{
+    switch(evt->event_id)
+    {
+        case HTTP_EVENT_ON_DATA:
+            // si arriban datos del server.
+            printf("%.*s",evt->data_len,(char*)evt->data); // .* se usa porque no tiene caracter nulo
+            break;
+        
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+
+static void http_get(void)
+{
+    ESP_LOGI(TAG,"HTTP GET");
+
+    // Estructura de configuración
+    esp_http_client_config_t http_config =
+    {
+        .url = SERVER_URL,                      // url del back-end
+        .event_handler = http_event_handler,    // Función que procesa la respuesta del servidor.
+    };
+
+    // Inicialización del cliente http. La inicialización devuelve un handle.
+    esp_http_client_handle_t client_handle = esp_http_client_init(&http_config);    
+
+    // Definimos el método HTTP GET
+    esp_http_client_set_method(client_handle,HTTP_METHOD_GET);
+
+    // Ejecutamos la petición GET.
+    // Abrimos el socket TCP hacia la IP y puerto. Envía GET y espera respuesta.
+    // Cuando llega la respuesta se ejecuta http_event_handler.
+
+    esp_err_t err_http = esp_http_client_perform(client_handle); // pasar handle del cliente
+
+    // Analizamos el resultado de la petición:
+    if(err_http==ESP_OK)
+    {
+        ESP_LOGI(TAG,
+            "GET status = %d, content_length = %lld",
+            esp_http_client_get_status_code(client_handle),
+            esp_http_client_get_content_length(client_handle));
+    }
+    else
+    {
+        ESP_LOGE(TAG,"GET Failed %s",esp_err_to_name(err_http));
+    }
+
+    // Liberamos recursos:
+    esp_http_client_cleanup(client_handle);
+}
+
+static void http_post(float *pressure,float *temperature)
+{
+    // Tamaño del buffer
+    char post_data[64];
+
+    // Formateo el string con las mediciones
+    sprintf(post_data,POST_DATA_TEMPLATE,*temperature,*pressure);
+
+    // Mensajes informativos: URL de destino y MENSAJE:
+    ESP_LOGI(TAG,"URL: %s",SERVER_URL);
+    ESP_LOGI(TAG,"POST_DATA: %s",post_data);
+
+    // Estructura de configuración con URL y handler.
+    esp_http_client_config_t config_post = 
+    {
+        .url = SERVER_URL,
+        .event_handler = http_event_handler  // pasar handler de eventos http
+    };
+
+    // Inicializamos el cliente http:
+    esp_http_client_handle_t client_post_handle = esp_http_client_init(&config_post);
+
+    // Definimos el método HTTP POST:
+    esp_err_t http_post_err = esp_http_client_set_method(client_post_handle,HTTP_METHOD_POST);
+
+    // Seteamos el header. Se le pasa el handle, la clave y el valor.
+    esp_http_client_set_header(
+        client_post_handle,
+        "Content-Type",
+        "application/x-www-form-urlencoded"
+    );
+
+    // Seteamos el payload. Se le pasa el handle, el puntero a los datos y la longitud.
+    esp_http_client_set_post_field(
+        client_post_handle,
+        post_data,
+        strlen(post_data)
+    );
+
+    // Petición POST
+    esp_err_t post_err = esp_http_client_perform(client_post_handle); // pasar handle del cliente
+
+    // Analizamos la respuesta de la petición POST.
+    if(post_err == ESP_OK)
+    {
+        ESP_LOGI(TAG,
+            "POST STATUS: %d",
+            esp_http_client_get_status_code(client_post_handle)
+            );
+    }
+    else
+    {
+        ESP_LOGE(TAG,
+            "POST FAILED: %s",
+            esp_err_to_name(post_err)
+        );
+    }
+
+    // Finalizamos la petición POST.
+    esp_http_client_cleanup(client_post_handle);
+
+}
+
 void rgb_init(void)
 {
     // --------------------- RGB ----------------------//
@@ -283,40 +423,38 @@ void rgb_blink_off(void)
     vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_OFF_MS));
 }
 
-
-void bmp280_init_esp(void)
+esp_err_t bmp280_init_esp(bmp280_t *dev,gpio_num_t sda_pin,gpio_num_t scl_pin)
 {
     // --------------------- BMP280 ----------------------//
-    
-    ESP_LOGI(TAG,"Iniciando configuración del BMP280");
+    ESP_LOGI(TAG,"Inicializando configuración del BMP280");
 
-    // Inicializamos el bmp280
+    // Inicializamos el i2c
     ESP_ERROR_CHECK(i2cdev_init());
 
-    // Estructura de configuración del sensor:
-    //bmp280_t dev;
     bmp280_params_t params;
 
     bmp280_init_default_params(&params);
-    memset(&dev,0,sizeof(bmp280_t));
+    memset(dev,0,sizeof(bmp280_t));
 
-    // Inicializamos el descriptor conectando los pines SDA y SCL.
-    ESP_ERROR_CHECK(bmp280_init_desc(&dev, BMP280_I2C_ADDRESS_0,0,I2C_MASTER_SDA,I2C_MASTER_SCL));
-    ESP_ERROR_CHECK(bmp280_init(&dev,&params));
+    // Inicializa el descriptor
+    ESP_ERROR_CHECK(bmp280_init_desc(dev,BMP280_I2C_ADDRESS_0,0,sda_pin,scl_pin));
 
-    ESP_LOGI(TAG,"Sensor inicializado correctamente! chip conectado con ID: 0x%02X",dev.id);
+    // Inicializamos el BMP280
+    ESP_ERROR_CHECK(bmp280_init(dev,&params));
 
-    //float pressure = 0.0f;
-    //float temperature = 0.0f;
+    ESP_LOGI(TAG,"Sensor Inicializado");
+
+    return ESP_OK;
 }
 
-void read_temp_press(void)
+
+void bmp280_read(bmp280_t *dev,float *temperature,float *pressure)
 {
     //----------------- LECTURA BMP280----------------------//
 
-    if(bmp280_read_float(&dev,&temperature,&pressure,NULL) == ESP_OK)
+    if(bmp280_read_float(dev,temperature,pressure,NULL) == ESP_OK)
     {   
-        ESP_LOGI(TAG,"Temperatura: %.2f °C | Presión: %.2f Pa",temperature,pressure);
+        ESP_LOGI(TAG,"Temperatura: %.2f °C | Presión: %.2f Pa",*temperature,*pressure);
     }
     else
     {
