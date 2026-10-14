@@ -27,3 +27,6 @@ managed_components/
 
 #headers
 wifi_credentials.h
+
+
+node_modules/
