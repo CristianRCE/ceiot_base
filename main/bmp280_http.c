@@ -17,6 +17,7 @@
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_http_client.h"
+#include "wifi_credentials.h"
 
 // MACROS PARA EL LED RGB
 #define LED_RGB_PIN 48
@@ -33,11 +34,6 @@
 // MACROS PARA PINES DEL BMP280
 #define I2C_MASTER_SDA 4
 #define I2C_MASTER_SCL 5
-
-// MACROS PARA EL WI-FI
-#define WIFI_SSID "WifiNet_Digital_Aguilera-2.4G"
-#define WIFI_PASSWORD "AguileraY287"
-#define WIFI_RETRY 5
 
 // MACROS PARA HTTP
 #define SERVER_URL "http://192.168.1.11:8080/measurement"
