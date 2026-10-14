@@ -6,6 +6,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "esp_log.h"
 #include "driver/rmt_tx.h"
 #include "led_strip_encoder.h"
@@ -39,10 +40,11 @@
 #define WIFI_RETRY 5
 
 // MACROS PARA HTTP
-#define SERVER_URL "http://192.168.1.20:8080/measurement"
+#define SERVER_URL "http://192.168.1.11:8080/measurement"
 
 // MACRO PARA EL DEVICE ID
 #define DEVICE_ID "01"
+#define DEVICE_KEY "234567"
 
 // PROTOTIPOS DE FUNCIONES
 void wifi_init_sta(void);
@@ -50,8 +52,7 @@ void wifi_init_sta(void);
 static void event_handler(void *arg,
                         esp_event_base_t event_base,
                         int32_t event_id,
-                        void* event_data
-                            );
+                        void* event_data);
 
 esp_err_t bmp280_init_esp(bmp280_t *dev,gpio_num_t sda_pin,gpio_num_t scl_pin);
 
@@ -65,7 +66,7 @@ void rgb_blink_off(void);
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt);
 
-static void http_post(float *pressure,float *temperature);
+static void http_post(float *temperature,float *pressure);
 
 static void http_get(void);
 
@@ -74,6 +75,9 @@ static int s_retry_num=0; // contador de antidad de intentos.
 
 static rmt_channel_handle_t rmt_channel_handle = NULL;
 static rmt_encoder_handle_t rmt_encoder_handle = NULL;
+
+static EventGroupHandle_t wifi_event_group;  //para hacer el post luego de tener IP
+#define WIFI_CONNECTED_BIT BIT0
 
 static const char *TAG = "example";
 
@@ -84,7 +88,7 @@ rmt_transmit_config_t ts_config =
     .loop_count=0,
 };
 
-static char *POST_DATA_TEMPLATE = "id="DEVICE_ID"&t=%0.2f&h=%0.2f";  // FOrmato URL encoded
+static char *POST_DATA_TEMPLATE = "id="DEVICE_ID"&key="DEVICE_KEY"&t=%0.2f&p=%0.2f";  // Formato URL encoded
 
 void app_main(void)
 {   
@@ -109,15 +113,24 @@ void app_main(void)
     // Inicialización del RGB.
     rgb_init();
     
-    //Inicialización del BMP280
+    // Inicialización del BMP280
     bmp280_init_esp(&dev,I2C_MASTER_SDA,I2C_MASTER_SCL);
+
+    // Bloqueamos el bloque infinito hasta obtener IP del router.
+    xEventGroupWaitBits(
+        wifi_event_group,
+        WIFI_CONNECTED_BIT,
+        pdFALSE,
+        pdTRUE,
+        portMAX_DELAY
+    );
 
     while(1)
     {   
         bmp280_read(&dev,&temperature,&pressure);
+        http_post(&temperature,&pressure);
         rgb_blink_red();
         rgb_blink_off();
-
     }
 }
 
@@ -141,27 +154,29 @@ void app_main(void)
 static void event_handler(void *arg,
                         esp_event_base_t event_base,
                         int32_t event_id,
-                        void* event_data
-                            )
+                        void* event_data)
 {
-
     if(event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
         esp_wifi_connect();
     }
     else if(event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
+        // Limpiamos el bit 
+        xEventGroupClearBits(wifi_event_group,WIFI_CONNECTED_BIT);
+
         if(s_retry_num<WIFI_RETRY)
         {
             esp_wifi_connect();
             s_retry_num++;
-            ESP_LOGI(TAG,"Intenando reconectarse");
+            ESP_LOGI(TAG,"Intentando reconectarse");
         }
         else
         {
             ESP_LOGE(TAG,"Fallo al conectar a la red Wi-Fi.");
         };
     }
+
     // Cuando el router nos asigna una IP con éxito.
     else if(event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
@@ -169,6 +184,10 @@ static void event_handler(void *arg,
         ip_event_got_ip_t* event=(ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG,"CONECTADO GUACHIN");
         s_retry_num=0; //reiniciamos el contador, ya nos conectamos.
+
+        // Ya obtuvimos IP. Seteamos el bit para arrancar el bucle infinito
+
+        xEventGroupSetBits(wifi_event_group,WIFI_CONNECTED_BIT);
     };
 }
 
@@ -187,6 +206,9 @@ static void event_handler(void *arg,
 */
 void wifi_init_sta(void)
 {
+    // Flag para detectar IP asignada
+    wifi_event_group = xEventGroupCreate(); 
+
     // Inicializamos el stack TCP/IP
     esp_netif_init();
 
@@ -298,7 +320,7 @@ static void http_get(void)
     esp_http_client_cleanup(client_handle);
 }
 
-static void http_post(float *pressure,float *temperature)
+static void http_post(float *temperature,float *pressure)
 {
     // Tamaño del buffer
     char post_data[64];
