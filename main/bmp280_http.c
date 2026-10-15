@@ -56,6 +56,8 @@ void bmp280_read(bmp280_t *dev,float *temperature,float *pressure);
 
 void rgb_init(void);
 
+void rgb_blink_green(void);
+
 void rgb_blink_red(void);
 
 void rgb_blink_off(void);
@@ -112,7 +114,10 @@ void app_main(void)
     // Inicialización del BMP280
     bmp280_init_esp(&dev,I2C_MASTER_SDA,I2C_MASTER_SCL);
 
-    // Bloqueamos el bloque infinito hasta obtener IP del router.
+    // Ponemos el led en rojo para indicar que todavía no se tiene dirección IP asignada por el DHCP.
+    rgb_blink_red();
+
+    // Bloqueamos el bucle infinito hasta obtener IP del router.
     xEventGroupWaitBits(
         wifi_event_group,
         WIFI_CONNECTED_BIT,
@@ -125,7 +130,7 @@ void app_main(void)
     {   
         bmp280_read(&dev,&temperature,&pressure);
         http_post(&temperature,&pressure);
-        rgb_blink_red();
+        rgb_blink_green();
         rgb_blink_off();
     }
 }
@@ -178,7 +183,7 @@ static void event_handler(void *arg,
     {
         // guardamos la dirección de memoria que obtenemos en event_data (primero la casteamos).
         ip_event_got_ip_t* event=(ip_event_got_ip_t*)event_data;
-        ESP_LOGI(TAG,"CONECTADO GUACHIN");
+        ESP_LOGI(TAG,"CONECTADO A LA RED");
         s_retry_num=0; //reiniciamos el contador, ya nos conectamos.
 
         // Ya obtuvimos IP. Seteamos el bit para arrancar el bucle infinito
@@ -412,7 +417,7 @@ void rgb_init(void)
 
 }
 
-void rgb_blink_red(void)
+void rgb_blink_green(void)
 {
     // PREPARAMOS EL COLOR A TRANSMITIR
     // Formato GRB: posición 0 es verde.
@@ -424,6 +429,20 @@ void rgb_blink_red(void)
     rmt_transmit(rmt_channel_handle,rmt_encoder_handle,&led_pixels,sizeof(led_pixels),&ts_config);
     rmt_tx_wait_all_done(rmt_channel_handle,portMAX_DELAY);
     vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_ON_MS));
+}
+
+void rgb_blink_red(void)
+{
+    // PREPARAMOS EL COLOR A TRANSMITIR
+    // Formato GRB: posición 0 es verde.
+    led_pixels[0]=0;
+    led_pixels[1]=255;
+    led_pixels[2]=0;
+
+    // Pongo el led en color rojo 
+    rmt_transmit(rmt_channel_handle,rmt_encoder_handle,&led_pixels,sizeof(led_pixels),&ts_config);
+    rmt_tx_wait_all_done(rmt_channel_handle,portMAX_DELAY);
+    //vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD_ON_MS));
 }
 
 
