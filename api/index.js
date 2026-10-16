@@ -1,3 +1,4 @@
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const {MongoClient} = require("mongodb");
@@ -6,6 +7,7 @@ const PgMem = require("pg-mem");
 const db = PgMem.newDb();
 
     const render = require("./render.js");
+
 // Measurements database setup and access
 
 let database = null;
@@ -41,9 +43,19 @@ app.use(express.static('spa/static'));
 
 const PORT = 8080;
 
+// Acá entran los datos de la ESP32.
+
 app.post('/measurement', async function (req, res) {
     console.log("device id    : " + req.body.id + " key         : " + req.body.key + " temperature : " + req.body.t + " pressure    : " + req.body.p);	
-    const insertedId = await insertMeasurement({id:req.body.id, t:req.body.t, h:req.body.p});
+    
+    // Agregamos Timestamp
+    const insertedId = await insertMeasurement({
+        id:req.body.id,
+        t:req.body.t,
+        h:req.body.p,
+        timestamp: new Date()    // Campo con marca de tiempo en formato ISO 8601.
+    });
+
 	res.send("received measurement into " +  insertedId);
 });
 
@@ -116,10 +128,10 @@ startDatabase().then(async() => {
     const addAdminEndpoint = require("./admin.js");
     addAdminEndpoint(app, render);
 
-    await insertMeasurement({id:'00', t:'18', h:'78'});
-    await insertMeasurement({id:'00', t:'19', h:'77'});
-    await insertMeasurement({id:'00', t:'17', h:'77'});
-    await insertMeasurement({id:'01', t:'17', h:'77'});
+    await insertMeasurement({id:'00', t:'18', h:'78', timestamp: new Date()});
+    await insertMeasurement({id:'00', t:'19', h:'77', timestamp: new Date()});
+    await insertMeasurement({id:'00', t:'17', h:'77', timestamp: new Date()});
+    await insertMeasurement({id:'01', t:'17', h:'77', timestamp: new Date()});
     console.log("mongo measurement database Up");
 
     db.public.none("CREATE TABLE devices (device_id VARCHAR, name VARCHAR, key VARCHAR)");

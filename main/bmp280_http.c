@@ -36,7 +36,7 @@
 #define I2C_MASTER_SCL 5
 
 // MACROS PARA HTTP
-#define SERVER_URL "http://192.168.1.13:8080/measurement"
+#define SERVER_URL "http://192.168.1.17:8080/measurement"
 
 // MACRO PARA EL DEVICE ID
 #define DEVICE_ID "01"
